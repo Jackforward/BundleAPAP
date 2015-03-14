@@ -1,6 +1,6 @@
-function [matchab_inliar, H] = ransac(valid_ptsa, valid_ptsb, matchab)
-X1 = valid_ptsa(matchab(:,1)).Location;X1(:,3) = 1;X1 = X1';
-X2 = valid_ptsb(matchab(:,2)).Location;X2(:,3) = 1;X2 = X2';
+function [matchab_inliar, H, A, T1, T2, D1, D2] = ransac(valid_ptsa, valid_ptsb, matchab)
+X1 = valid_ptsa(matchab(:,1)).Location;X1(:,3) = 1;X1 = double(X1)';
+X2 = valid_ptsb(matchab(:,2)).Location;X2(:,3) = 1;X2 = double(X2)';
 numMatches = size(matchab,1);
 for t = 1:200
     %estimate homography(need more detail)
@@ -19,7 +19,7 @@ for t = 1:200
     score(t) = sum(ok{t});
 end
 [score,best] = max(score);
-H = double(H{best});
+%H = double(H{best});
 ok = ok{best};
 confidence = score / (8 + 0.3 * numMatches);
 if confidence < 2
@@ -27,4 +27,12 @@ if confidence < 2
 else
     matchab_inliar = matchab(ok,:);
 end
+% Refine homography using DLT on inliers.
+X1 = X1(:,ok);X2 = X2(:,ok);
+[ dat_norm_img1,T1 ] = normalise2dpts(X1);
+[ dat_norm_img2,T2 ] = normalise2dpts(X2);
+data_norm = [ dat_norm_img1 ; dat_norm_img2 ];
+[ h,A,D1,D2 ] = feval('homography_fit',data_norm(:,:));
+H = T2\(reshape(h,3,3)*T1);
+
 end
