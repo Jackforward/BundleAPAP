@@ -14,10 +14,11 @@ C2 = 100;
 % addpath('../mdlt/mexfiles');
 % addpath('../mdlt/multigs');
 % addpath('../mdlt');
+% run 'E:\stitching\mdlt\vlfeat-0.9.14\toolbox\vl_setup.m'
 
-I1c = imread('E:\stitching\source\low_res\G9PQ0282.jpg');
-I2c = imread('E:\stitching\source\low_res\G9PQ0283.jpg');
-I3c = imread('E:\stitching\source\low_res\G9PQ0284.jpg');
+I1c = imread('E:\stitching\source\low_res\G9PQ0283.jpg');
+I2c = imread('E:\stitching\source\low_res\G9PQ0284.jpg');
+I3c = imread('E:\stitching\source\low_res\G9PQ0285.jpg');
 I1 = rgb2gray(I1c);I2 = rgb2gray(I2c);I3 = rgb2gray(I3c);
 
 %--------------------------------------
@@ -118,19 +119,13 @@ off = round([ 1 - min(corners(1,:)) + 1 ; 1 - min(corners(2,:)) + 1 ]);
 % %------------------
 % % Bundle Adjustment
 % %------------------
-img1 = I2c;
-img2 = I1c;
+img1 = I2c;img2 = I1c;img3 = I3c;
 
 % Convert all point data to double
 point = double(point);
 keypoint = double(keypoint);
-data_orig =  point';
-% Prepare keypoint match data
-clear pos                                              % pair between 1st and ref
-pos = keypoint(:,1) + keypoint(:,2) ~= 0;
-match_pair_1 = [point(pos,:)';keypoint(pos, 1:2)'];match_pair_1(6,:) = 1;
 % Image keypoints coordinates.
-Kp = [data_orig(1,:)' data_orig(2,:)'];
+Kp = point(:,1:2);
 % Generating mesh for MDLT.
 [ X,Y ] = meshgrid(linspace(1,cw,C1),linspace(1,ch,C2));
 BW = X(1,2) - X(1,1); BH = Y(2,1) - Y(1,1); % Block width & height
@@ -138,9 +133,11 @@ BW = X(1,2) - X(1,1); BH = Y(2,1) - Y(1,1); % Block width & height
 Mv = [X(:)-off(1), Y(:)-off(2)];
 % Perform Moving DLT
 Hmdlt = zeros(size(Mv,1),9);
-%err = 0;werr = 0;
-%test = [];
-parfor i=1:size(Mv,1)    
+% err = 0;
+werr = 0;
+werr_orig = 0;
+% test = [];
+parfor i=  1:size(Mv,1)    
     % Obtain kernel    
     Gki = exp(-pdist2(Mv(i,:),Kp)./sigma^2);   
     % Capping/offsetting kernel
@@ -149,36 +146,51 @@ parfor i=1:size(Mv,1)
     % right singular vector of W*A by means of SVD on WA (Weighted SVD).
     
     % picture wise mdlt
-    % 1st
+    % 1st picture
     v = wsvd(Wi,A{1,2});
     h = reshape(v,3,3)';            
     % De-condition
-    d1 = D1{1,2}; 
-    d2 = D2{1,2}; 
-    t1 = T1{1,2}; 
-    t2 = T2{1,2};
-    h = d2\h*d1;
-    h = t2\h*t1;
-    h = inv(h);
+    d1 = D1{1,2};d2 = D2{1,2}; t1 = T1{1,2}; t2 = T2{1,2};
+    h = d2\h*d1; h = t2\h*t1; h = inv(h);    
+    h1 = h;
+    Hmdlt1_orig(i,:) = h(:);
 
+    % 3rd picture
+    v = wsvd(Wi,A{2,3});
+    h = reshape(v,3,3)';            
+    % De-condition
+    d1 = D1{2,3}; d2 = D2{2,3}; t1 = T1{2,3}; t2 = T2{2,3};
+    h = d2\h*d1; h = t2\h*t1;
+    h3 = h;
+    Hmdlt3_orig(i,:) = h(:);
     
-    % Compute err.
-    pos = Mv(i,1) < match_pair_1(1,:)  & match_pair_1(1,:)  < Mv(i,1) + BW & Mv(i,2) < match_pair_1(2,:)  & match_pair_1(2,:) < Mv(i,2) + BH;
-    center = [Mv(i,1) + BW /2; Mv(i,2) + BH /2];
-    match_up_ref = match_pair_1(1:3,pos); match_up_src = match_pair_1(4:6,pos);
-%     mapped_ref = regularize(h * match_up_ref);
-%     err = err + dist(match_up_src,mapped_ref);
-    %test = [test;sum(pos)];
-    
-%     Gki_star = exp(-pdist2(center',match_up_ref(1:2,:)')./sigma^2);  
-%     W_star = max(gamma,Gki_star); 
-%     werr = werr + wdist(match_up_src,mapped_ref,W_star);
-    option = optimset('MaxFunEvals',500);
-    if (mdlt_cost(center, h, match_up_src, match_up_ref,sigma,gamma) ~= 0)
-        h = fminsearch(@(h)mdlt_cost(center, h, match_up_src, match_up_ref,sigma,gamma),h,option);
+    % Bundle Adjustment
+    pos = Mv(i,1) < point(:,1)  & point(:,1)  < Mv(i,1) + BW...
+        & Mv(i,2) < point(:,2)  & point(:,2) < Mv(i,2) + BH;
+    pt_ref = point(pos,:);
+
+    if ~isempty(pt_ref)
+        center = [Mv(i,1) + BW /2; Mv(i,2) + BH /2];
+        pt_src1 = keypoint(pos,1:2); pt_src1(:,3) = (pt_src1(:,1) + pt_src1(:,2)) ~= 0;
+        pt_src3 = keypoint(pos,5:6); pt_src3(:,3) = (pt_src3(:,1) + pt_src3(:,2)) ~= 0;
+        pt_ref_orig = keypoint(pos,3:4);pt_ref_orig(:,3) = (pt_ref_orig(:,1) + pt_ref_orig(:,2) ~= 0);
+        match_table = h1; 
+        match_table = [match_table h3]; 
+        match_table = [match_table pt_ref'];
+        werr_orig = werr_orig + bundle_cost2(match_table, pt_src1, pt_src3, pt_ref_orig, center, sigma, gamma);
+        option = optimoptions('fminunc','Algorithm','quasi-newton');
+        [match_table, new_cost] = fminunc(@(match_table)bundle_cost2(match_table, pt_src1, pt_src3, pt_ref_orig, center, sigma, gamma),match_table,option);
+        % cost = [old_cost new_cost];
+        % disp(cost);
+        h1 = match_table(1:3,1:3);
+        h3 = match_table(1:3,4:6);
+        werr = werr + bundle_cost2(match_table, pt_src1, pt_src3, pt_ref_orig, center, sigma, gamma);
+
     end
-    Hmdlt(i,:) = h(:);
-
+    
+    Hmdlt1(i,:) = h1(:);
+    Hmdlt3(i,:) = h3(:);
+        
 end
 
 % ---------------------------------
@@ -187,8 +199,23 @@ end
 % Warping images with Moving DLT.
 warped_img1 = uint8(zeros(ch,cw,3));
 warped_img1(off(2):(off(2)+size(img1,1)-1),off(1):(off(1)+size(img1,2)-1),:) = img1;
-[warped_img2] = imagewarping(double(ch),double(cw),double(img2),Hmdlt,double(off),X(1,:),Y(:,1)');
+[warped_img2] = imagewarping(double(ch),double(cw),double(img2),Hmdlt1,double(off),X(1,:),Y(:,1)');
 warped_img2 = reshape(uint8(warped_img2),size(warped_img2,1),size(warped_img2,2)/3,3);
+[warped_img3] = imagewarping(double(ch),double(cw),double(img3),Hmdlt3,double(off),X(1,:),Y(:,1)');
+warped_img3 = reshape(uint8(warped_img3),size(warped_img3,1),size(warped_img3,2)/3,3);
 % Blending images by averaging (linear blending)
 linear_mdlt = imageblending(warped_img1,warped_img2);
+linear_mdlt = imageblending(linear_mdlt,warped_img3);
 imshow(linear_mdlt);
+
+% Warping images with Moving DLT.
+warped_img1 = uint8(zeros(ch,cw,3));
+warped_img1(off(2):(off(2)+size(img1,1)-1),off(1):(off(1)+size(img1,2)-1),:) = img1;
+[warped_img2] = imagewarping(double(ch),double(cw),double(img2),Hmdlt1_orig,double(off),X(1,:),Y(:,1)');
+warped_img2 = reshape(uint8(warped_img2),size(warped_img2,1),size(warped_img2,2)/3,3);
+[warped_img3] = imagewarping(double(ch),double(cw),double(img3),Hmdlt3_orig,double(off),X(1,:),Y(:,1)');
+warped_img3 = reshape(uint8(warped_img3),size(warped_img3,1),size(warped_img3,2)/3,3);
+% Blending images by averaging (linear blending)
+linear_mdlt = imageblending(warped_img1,warped_img2);
+linear_mdlt = imageblending(linear_mdlt,warped_img3);
+figure;imshow(linear_mdlt);
