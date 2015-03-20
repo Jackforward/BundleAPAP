@@ -1,8 +1,8 @@
 clear;clc;close all;
-NUM_PIC = 3;
+NUM_PIC = 4;
 REF = 2;
 varargin = {'E:\stitching\source\low_res\G9PQ0283.jpg', ...
-    'E:\stitching\source\low_res\G9PQ0284.jpg', 'E:\stitching\source\low_res\G9PQ0285.jpg'};
+    'E:\stitching\source\low_res\G9PQ0284.jpg', 'E:\stitching\source\low_res\G9PQ0285.jpg', 'E:\stitching\source\low_res\G9PQ0304.jpg'};
 tic;
 %-----------------------------
 % Set Path and Global Varience
@@ -11,7 +11,7 @@ gamma = 0.01; % Normalizer for Moving DLT. (0.0015-0.1 are usually good numbers)
 sigma = 8.5;  % Bandwidth for Moving DLT. (Between 8-12 are good numbers).   
 C1 = 100; % Resolution/grid-size for the mapping function in MDLT (C1 x C2).
 C2 = 100;
-
+% 
 % addpath('../mdlt/modelspecific');
 % addpath('../mdlt/mexfiles');
 % addpath('../mdlt/multigs');
@@ -121,8 +121,6 @@ off = round([ 1 - min(corners(1,:)) + 1 ; 1 - min(corners(2,:)) + 1 ]);
 % %------------------
 % % Bundle Adjustment
 % %------------------
-img1 = Ic{REF};img2 = Ic{1};img3 = Ic{3};
-
 % Convert all point data to double
 point = double(point);
 keypoint = double(keypoint);
@@ -136,13 +134,13 @@ Mv = [X(:)-off(1), Y(:)-off(2)];
 % Perform Moving DLT
 % Hmdlt = zeros(size(Mv,1),9);
 Hmdlt = cell(1, NUM_PIC);
-% err = 0;
+werr_orig = 0;
 werr = 0;
 % test = [];
 toc;tic;
 
-clear H; H = cell(1,NUM_PIC);pt_src = cell(1,NUM_PIC);
-for i=  1:size(Mv,1)    
+clear H; H = cell(1,size(Mv,1));pt_src = cell(1,size(Mv,1));
+parfor i=  1:size(Mv,1)    
     % Obtain kernel    
     Gki = exp(-pdist2(Mv(i,:),Kp)./sigma^2);   
     % Capping/offsetting kernel
@@ -152,23 +150,30 @@ for i=  1:size(Mv,1)
     
     for j = 1 : NUM_PIC
         if j == REF
-            H{j} = diag([1,1,1]);
+            H{i}(1:3,3*j-2:3*j) = diag([1,1,1]);
         elseif j < REF
                 v = wsvd(Wi,A{j,REF});
                 h = reshape(v,3,3)';            
                 % De-condition
                 d1 = D1{j,REF};d2 = D2{j,REF}; t1 = T1{j,REF}; t2 = T2{j,REF};
                 h = d2\h*d1; h = t2\h*t1; h = inv(h);    
-                H{j} = h;
+                H{i}(1:3,3*j-2:3*j) = h;
         elseif j > REF
                 v = wsvd(Wi,A{REF,j});
                 h = reshape(v,3,3)';            
                 % De-condition
                 d1 = D1{REF,j}; d2 = D2{REF,j}; t1 = T1{REF,j}; t2 = T2{REF,j};
                 h = d2\h*d1; h = t2\h*t1;
-                H{j} = h;
+                H{i}(1:3,3*j-2:3*j) = h;
         end
     end
+    
+    
+%     % For compare intention
+%     for j = 1:NUM_PIC
+%         Hmdlt_orig{i}(j,:) = reshape(H{i}(1:3,3*j-2:3*j),1,[]);
+%     end
+%     
     
     % Bundle Adjustment
     pos = Mv(i,1) < point(:,1)  & point(:,1)  < Mv(i,1) + BW...
@@ -178,38 +183,53 @@ for i=  1:size(Mv,1)
         match_table = [];
         center = [Mv(i,1) + BW /2; Mv(i,2) + BH /2];
         for j = 1 : NUM_PIC
-            pt_src{j} = keypoint(pos,j*2-1:j*2); pt_src{j}(:,3) = (pt_src{j}(:,1) + pt_src{j}(:,2)) ~= 0;
-            match_table = [match_table H{j}];
+            pt_src{i}(:,j*3-2:j*3-1) = keypoint(pos,j*2-1:j*2); 
+            pt_src{i}(:,j*3) = (pt_src{i}(:,j*3-2) + pt_src{i}(:,j*3-1)) ~= 0;
+            match_table = [match_table H{i}(1:3,3*j-2:3*j)];
         end
-        % pt_ref_orig = keypoint(pos,REF*2-1:REF*2);pt_ref_orig(:,3) = (pt_ref_orig(:,1) + pt_ref_orig(:,2) ~= 0);
         match_table = [match_table pt_ref'];
-        option = optimoptions('fminunc','Algorithm','quasi-newton','Display','off');
-        [match_table, new_cost] = fminunc(@(match_table)bundle_cost(match_table, pt_src, center, NUM_PIC, sigma, gamma),match_table,option);
-        % cost = [old_cost new_cost];
-        % disp(cost);
+        pt_src_ = pt_src{i};
+        werr_orig = werr_orig + par_bundle_cost(match_table, pt_src_, center, NUM_PIC, sigma, gamma);
+        option = optimoptions(@lsqnonlin,'Algorithm','levenberg-marquardt');
+        match_table = lsqnonlin(@(match_table)par_bundle_cost(match_table, pt_src_, center, NUM_PIC, sigma, gamma),match_table,[],[],option);
         for j = 1:NUM_PIC
-            H{j} = match_table(1:3,3*j-2:3*j);
+            H{i}(1:3,3*j-2:3*j) = match_table(1:3,3*j-2:3*j);
         end
-        werr = werr + bundle_cost(match_table, pt_src, center, NUM_PIC, sigma, gamma);
+        werr = werr + par_bundle_cost(match_table, pt_src_, center, NUM_PIC, sigma, gamma);
 
     end
+    
     for j = 1:NUM_PIC
-        Hmdlt{j} = H{j}(:);
+        Hmdlt{i}(j,:) = reshape(H{i}(1:3,3*j-2:3*j),1,[]);
     end
         
 end
 toc;tic;
+
+% % For compare intention
+% for j = 1:NUM_PIC
+%     for i =  1:size(Mv,1)
+%         Hmdlt_{j}(i,:) = Hmdlt_orig{i}(j,:);
+%     end
+% end
+
+
+for j = 1:NUM_PIC
+    for i =  1:size(Mv,1)
+        Hmdlt_{j}(i,:) = Hmdlt{i}(j,:);
+    end
+end
+
+
 % ---------------------------------
 % Image stitching with Moving DLT.
 % ---------------------------------
 % Warping images with Moving DLT.
-warped_img1 = uint8(zeros(ch,cw,3));
-warped_img1(off(2):(off(2)+size(img1,1)-1),off(1):(off(1)+size(img1,2)-1),:) = img1;
-[warped_img2] = imagewarping(double(ch),double(cw),double(img2),Hmdlt{1},double(off),X(1,:),Y(:,1)');
-warped_img2 = reshape(uint8(warped_img2),size(warped_img2,1),size(warped_img2,2)/3,3);
-[warped_img3] = imagewarping(double(ch),double(cw),double(img3),Hmdlt{3},double(off),X(1,:),Y(:,1)');
-warped_img3 = reshape(uint8(warped_img3),size(warped_img3,1),size(warped_img3,2)/3,3);
-% Blending images by averaging (linear blending)
-linear_mdlt = imageblending(warped_img1,warped_img2);
-linear_mdlt = imageblending(linear_mdlt,warped_img3);
+linear_mdlt = uint8(zeros(ch,cw,3));
+linear_mdlt(off(2):(off(2)+size(Ic{REF},1)-1),off(1):(off(1)+size(Ic{REF},2)-1),:) = Ic{REF};
+for i = 1:NUM_PIC
+    [warped_img] = imagewarping(double(ch),double(cw),double(Ic{i}),Hmdlt_{i},double(off),X(1,:),Y(:,1)');
+    warped_img = reshape(uint8(warped_img),size(warped_img,1),size(warped_img,2)/3,3);
+    linear_mdlt = imageblending(linear_mdlt,warped_img);
+end
 imshow(linear_mdlt);
