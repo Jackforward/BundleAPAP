@@ -138,8 +138,9 @@ Hmdlt = zeros(size(Mv,1),9);
 % err = 0;
 werr = 0;
 % test = [];
-toc;
-tic;
+toc;tic;
+
+clear H; H = cell(1,NUM_PIC);pt_src = cell(1,NUM_PIC);
 for i=  1:size(Mv,1)    
     % Obtain kernel    
     Gki = exp(-pdist2(Mv(i,:),Kp)./sigma^2);   
@@ -150,7 +151,7 @@ for i=  1:size(Mv,1)
     
     for j = 1 : NUM_PIC
         if j == REF
-            continue
+            H{j} = diag([1,1,1]);
         elseif j < REF
                 v = wsvd(Wi,A{j,REF});
                 h = reshape(v,3,3)';            
@@ -176,22 +177,19 @@ for i=  1:size(Mv,1)
         match_table = [];
         center = [Mv(i,1) + BW /2; Mv(i,2) + BH /2];
         for j = 1 : NUM_PIC
-            if j == REF
-                continue
-            else
-                pt_src{j} = keypoint(pos,j*2-1:j*2); pt_src{j}(:,3) = (pt_src{j}(:,1) + pt_src{j}(:,2)) ~= 0;
-                match_table = [match_table H{j}];
-            end
+            pt_src{j} = keypoint(pos,j*2-1:j*2); pt_src{j}(:,3) = (pt_src{j}(:,1) + pt_src{j}(:,2)) ~= 0;
+            match_table = [match_table H{j}];
         end
-        pt_ref_orig = keypoint(pos,REF*2-1:REF*2);pt_ref_orig(:,3) = (pt_ref_orig(:,1) + pt_ref_orig(:,2) ~= 0);
+        % pt_ref_orig = keypoint(pos,REF*2-1:REF*2);pt_ref_orig(:,3) = (pt_ref_orig(:,1) + pt_ref_orig(:,2) ~= 0);
         match_table = [match_table pt_ref'];
         option = optimoptions('fminunc','Algorithm','quasi-newton','Display','off');
-        [match_table, new_cost] = fminunc(@(match_table)bundle_cost2(match_table, pt_src{1}, pt_src{3}, pt_ref_orig, center, sigma, gamma),match_table,option);
+        [match_table, new_cost] = fminunc(@(match_table)bundle_cost(match_table, pt_src, center, NUM_PIC, sigma, gamma),match_table,option);
         % cost = [old_cost new_cost];
         % disp(cost);
-        H{1} = match_table(1:3,1:3);
-        H{3} = match_table(1:3,4:6);
-        werr = werr + bundle_cost2(match_table, pt_src{1}, pt_src{3}, pt_ref_orig, center, sigma, gamma);
+        for j = 1:NUM_PIC
+            H{j} = match_table(1:3,3*j-2:3*j);
+        end
+        werr = werr + bundle_cost(match_table, pt_src, center, NUM_PIC, sigma, gamma);
 
     end
     
@@ -199,8 +197,7 @@ for i=  1:size(Mv,1)
     Hmdlt3(i,:) = H{3}(:);
         
 end
-toc;
-tic;
+toc;tic;
 % ---------------------------------
 % Image stitching with Moving DLT.
 % ---------------------------------
